@@ -511,79 +511,139 @@ plt.show()
 <h2>6 BCCD dataset</h2>
 <xmp>
 import tensorflow as tf
-import tensorflow_datasets as tfds
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras import layers, models
 import matplotlib.pyplot as plt
-from tensorflow.keras import layers
+import numpy as np
+import os
 
-# Load the BCCD dataset from TensorFlow Datasets
-dataset, info = tfds.load('blood_cells', with_info=True, as_supervised=True)
+# a) Load the dataset
+base_dir = r".."
+train_dir = os.path.join(base_dir, 'train')
+validation_dir = os.path.join(base_dir, 'valid')
 
-# The dataset is split into 'train' and 'test' by default
-train_data = dataset['train']
-val_data = dataset['test']
+# b) Show the number of testing and training images
+def count_images(directory):
+    return len([f for f in os.listdir(directory) if os.path.isfile(os.path.join(directory, f))])
 
-# Check the number of training and testing images
-train_size = info.splits['train'].num_examples
-val_size = info.splits['test'].num_examples
+train_size = count_images(train_dir)
+validation_size = count_images(validation_dir)
+print(f"Number of training images: {train_size}")
+print(f"Number of validation images: {validation_size}")
 
-print(f'Training Images: {train_size}')
-print(f'Validation Images: {val_size}')
-
-# Plot a few images from the dataset
-def plot_images(dataset, num_images=5):
+# c) Plot some images
+def plot_samples(directory, num_images=9):
     plt.figure(figsize=(10, 10))
-    for i, (image, label) in enumerate(dataset.take(num_images)):
-        plt.subplot(1, num_images, i + 1)
-        plt.imshow(image)
+    for i, img_name in enumerate(os.listdir(directory)[:num_images]):
+        img_path = os.path.join(directory, img_name)
+        img = tf.keras.preprocessing.image.load_img(img_path, target_size=(150, 150))
+        plt.subplot(3, 3, i + 1)
+        plt.imshow(img)
         plt.axis('off')
+    plt.suptitle('Sample Images from Dataset')
     plt.show()
 
-plot_images(train_data)
+plot_samples(train_dir)
 
-# Image Augmentation function
-def augment_image(image):
-    image = tf.image.random_flip_left_right(image)  # Random horizontal flip
-    image = tf.image.random_flip_up_down(image)    # Random vertical flip
-    image = tf.image.random_contrast(image, lower=0.2, upper=0.5)  # Random contrast
-    return image
+# d) Do image augmentation – contrast, flipping, and rotation
+train_datagen_augmented = ImageDataGenerator(
+    rescale=1.0/255,
+    rotation_range=20,
+    horizontal_flip=True,
+    vertical_flip=True,
+    brightness_range=[0.8, 1.2]
+)
 
-# Apply augmentation on the dataset
-train_data = train_data.map(lambda image, label: (augment_image(image), label))
-val_data = val_data.map(lambda image, label: (augment_image(image), label))
+validation_datagen = ImageDataGenerator(rescale=1.0/255)
 
-# Normalize the images
-normalization_layer = layers.Rescaling(1.0 / 255)
-train_data = train_data.map(lambda x, y: (normalization_layer(x), y))
-val_data = val_data.map(lambda x, y: (normalization_layer(x), y))
+# Load images with augmentation
+train_generator_augmented = train_datagen_augmented.flow_from_directory(
+    base_dir,
+    target_size=(150, 150),
+    batch_size=32,
+    class_mode='categorical',
+    subset='training'  # Specify for augmentation
+)
 
-# Build a CNN model
-model = tf.keras.Sequential([
-    layers.InputLayer(input_shape=(128, 128, 3)),  # Adjust size to 128x128 for simplicity
-    layers.Conv2D(32, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
+validation_generator = validation_datagen.flow_from_directory(
+    base_dir,
+    target_size=(150, 150),
+    batch_size=32,
+    class_mode='categorical'
+)
+
+# e) After augmentation, show the number of testing and training images
+print(f"Number of training images (augmented): {train_size}")
+print(f"Number of validation images: {validation_size}")
+
+# Normalize the training data using ImageDataGenerator (rescale=1.0/255).
+
+# g) Build a CNN for training without augmentation
+cnn_model = models.Sequential([
+    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(150, 150, 3)),
+    layers.MaxPooling2D(2, 2),
     layers.Conv2D(64, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
+    layers.MaxPooling2D(2, 2),
     layers.Conv2D(128, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
+    layers.MaxPooling2D(2, 2),
     layers.Flatten(),
     layers.Dense(128, activation='relu'),
-    layers.Dense(1, activation='sigmoid')  # Binary classification, change to softmax for multi-class
+    layers.Dense(3, activation='softmax')  # Three classes: WBC, RBC, Platelets
 ])
 
-# Compile the model
-model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+cnn_model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
-# Train the model
-history = model.fit(train_data.batch(32), validation_data=val_data.batch(32), epochs=10)
+# Train CNN without augmentation
+history_no_aug = cnn_model.fit(
+    validation_generator,  # Without augmentation
+    epochs=5,
+    validation_data=validation_generator
+)
 
-# Plot training and validation accuracy
-plt.plot(history.history['accuracy'], label='Training Accuracy')
-plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
-plt.xlabel('Epochs')
-plt.ylabel('Accuracy')
+# h) Show training/testing accuracy without augmentation
+plt.plot(history_no_aug.history['accuracy'], label='Training Accuracy (No Augmentation)')
+plt.plot(history_no_aug.history['val_accuracy'], label='Validation Accuracy (No Augmentation)')
 plt.legend()
+plt.title("Training and Validation Accuracy without Augmentation")
 plt.show()
 
+# i) Build a CNN for training images with augmentation
+cnn_model_aug = models.Sequential([
+    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(150, 150, 3)),
+    layers.MaxPooling2D(2, 2),
+    layers.Conv2D(64, (3, 3), activation='relu'),
+    layers.MaxPooling2D(2, 2),
+    layers.Conv2D(128, (3, 3), activation='relu'),
+    layers.MaxPooling2D(2, 2),
+    layers.Flatten(),
+    layers.Dense(128, activation='relu'),
+    layers.Dense(3, activation='softmax')  # Three classes
+])
+
+cnn_model_aug.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+# Train CNN with augmentation
+history_aug = cnn_model_aug.fit(
+    train_generator_augmented,  # With augmentation
+    epochs=5,
+    validation_data=validation_generator
+)
+
+# j) Show training/testing accuracy with augmentation
+plt.plot(history_aug.history['accuracy'], label='Training Accuracy (With Augmentation)')
+plt.plot(history_aug.history['val_accuracy'], label='Validation Accuracy (With Augmentation)')
+plt.legend()
+plt.title("Training and Validation Accuracy with Augmentation")
+plt.show()
+
+# k) Compare training/testing accuracy before and after augmentation
+plt.plot(history_no_aug.history['accuracy'], label='Training Accuracy (No Augmentation)')
+plt.plot(history_no_aug.history['val_accuracy'], label='Validation Accuracy (No Augmentation)')
+plt.plot(history_aug.history['accuracy'], label='Training Accuracy (With Augmentation)')
+plt.plot(history_aug.history['val_accuracy'], label='Validation Accuracy (With Augmentation)')
+plt.legend()
+plt.title("Comparison of Model Accuracy with and without Augmentation")
+plt.show()
 </xmp>
 <h2>7.1 edge detection gray scale</h2>
 <xmp>
